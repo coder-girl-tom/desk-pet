@@ -1,3 +1,6 @@
 worker.js
 wrangler.jsonc
 functions
+.git
+.wrangler
+.gitignore
