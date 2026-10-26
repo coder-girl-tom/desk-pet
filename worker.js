@@ -1,6 +1,9 @@
 // Cloudflare Worker: serves the website files and answers POST /api/chat.
 // The Gemini key stays in Cloudflare (secret GEMINI_API_KEY), never in GitHub.
-const MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3-flash-preview"];
+// Only models that support fast "minimal" thinking. The one that works is remembered,
+// so later requests do not waste time trying models that failed.
+const MODELS = ["gemini-3.8-flash", "gemini-3-flash-preview"];
+let goodModel = null;
 
 async function chat(request, env) {
   const origin = request.headers.get("Origin");
@@ -20,21 +23,28 @@ async function chat(request, env) {
   }
 
   let lastError = "No model worked";
-  for (const model of MODELS) {
+  const order = goodModel ? [goodModel] : MODELS;
+  for (const model of order) {
     const r = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents }),
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents,
+          generationConfig: { thinkingConfig: { thinkingLevel: "minimal" }, maxOutputTokens: 300 },
+        }),
       }
     );
     if (r.ok) {
       const d = await r.json();
       const text = (d.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("");
+      goodModel = model;
       return Response.json({ text, model });
     }
     lastError = `${model}: ${(await r.text()).slice(0, 200)}`;
+    goodModel = null;
   }
   return new Response(lastError, { status: 502 });
 }
