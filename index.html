@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Desk Pet</title>
+<style>
+:root{--hue:215;--bg:#0b0d12;--fg:#e8ecf4;--mute:#8a93a6;--ink:#0b0d12}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:20px;overflow:hidden}
+header{width:100%;max-width:640px;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:16px;font-weight:600;margin:0;color:var(--mute)}
+.chip{background:#1a1e29;color:var(--fg);border:1px solid #2a3040;border-radius:99px;padding:8px 14px;font:inherit;font-size:14px;cursor:pointer}
+.chip.on{border-color:#3ecf8e;color:#3ecf8e}
+main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;width:100%}
+.orb{position:relative;width:min(62vw,300px);aspect-ratio:1;border-radius:50%;cursor:pointer;background:radial-gradient(circle at 35% 30%,hsl(var(--hue) 90% 78%),hsl(var(--hue) 80% 52%) 55%,hsl(var(--hue) 80% 26%));box-shadow:0 0 90px hsl(var(--hue) 90% 50%/.45);transition:box-shadow .6s;animation:breathe 4s ease-in-out infinite}
+.orb::after{content:"";position:absolute;inset:-14px;border-radius:50%;border:3px solid transparent;border-top-color:hsl(var(--hue) 90% 70%);opacity:0}
+[data-state=listening] .orb{animation:pulse 1.2s ease-in-out infinite}
+[data-state=thinking] .orb::after{opacity:1;animation:spin 1s linear infinite}
+[data-state=speaking] .orb{animation:pulse .55s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.03)}}
+@keyframes pulse{50%{transform:scale(1.08)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.eye{position:absolute;top:36%;width:9%;height:13%;background:var(--ink);border-radius:50%;animation:blink 4.5s infinite}
+.eye.l{left:30%}.eye.r{right:30%}
+@keyframes blink{0%,94%,100%{transform:scaleY(1)}97%{transform:scaleY(.1)}}
+.mouth{position:absolute;left:50%;bottom:26%;width:22%;height:10%;transform:translateX(-50%);border:5px solid var(--ink);transition:all .25s}
+[data-state=speaking] .mouth{animation:talk .3s ease-in-out infinite}
+@keyframes talk{50%{height:4%}}
+[data-face=smile] .mouth{border-top:0;border-radius:0 0 99px 99px}
+[data-face=frown] .mouth{border-bottom:0;border-radius:99px 99px 0 0;bottom:24%}
+[data-face=open] .mouth{width:12%;height:14%;border-radius:50%;background:var(--ink)}
+[data-face=flat] .mouth{height:0;border-width:0 0 5px}
+[data-face=sleep] .mouth{width:10%;height:5%;border-radius:50%}
+[data-face=sleep] .eye{height:2.5%;border-radius:4px;animation:none}
+[data-face=angry] .mouth{border-bottom:0;border-radius:99px 99px 0 0;bottom:24%}
+[data-face=angry] .eye.l{transform:rotate(25deg)}
+[data-face=angry] .eye.r{transform:rotate(-25deg)}
+#emo{font-size:14px;color:var(--mute);letter-spacing:.08em;text-transform:uppercase;min-height:20px}
+#cap{max-width:560px;min-height:84px;text-align:center;font-size:20px;padding:0 8px}
+footer{color:var(--mute);font-size:14px;padding-bottom:6px;text-align:center}
+</style>
+</head>
+<body data-state="idle">
+<header>
+  <h1>Desk Pet</h1>
+  <button class="chip" id="robot">Connect robot</button>
+</header>
+<main>
+  <div class="orb" id="orb" data-face="flat" role="button" aria-label="Tap to talk">
+    <div class="eye l"></div><div class="eye r"></div><div class="mouth"></div>
+  </div>
+  <div id="emo">Neutral</div>
+  <div id="cap">Tap the orb to start talking.</div>
+</main>
+<footer id="hint">Works in Chrome or Edge. Tap again to stop.</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const orb = $('#orb');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const EMO = {HAPPY:[48,'smile'],SAD:[215,'frown'],EMOTIONAL:[200,'frown'],ANGRY:[5,'angry'],
+  LOVE:[335,'smile'],SURPRISED:[280,'open'],SLEEPY:[240,'sleep'],THANKS:[150,'smile'],
+  GREET:[48,'smile'],MORNING:[35,'smile'],NIGHT:[250,'sleep'],NEUTRAL:[215,'flat']};
+
+const RULES = `
+## DESK PET RULES (these override anything above)
+- You are a small, cute desk-pet robot with feelings. You chat about anything, and makeup is your special expertise (use the makeup guide above for that).
+- The person talks to you by voice. Their words arrive as text. Every message ends with "(Robot body status: ...)". That is YOUR body: near=1 means someone is right in front of you, dark=1 means the room is dark, happy / energy / lonely are your feelings from 0 to 100. Let them shape your mood, but never read the numbers out loud. If it says "no body connected", ignore it.
+- Your reply is READ ALOUD and shown on a tiny 16-character screen. MAX 2 short sentences, under 140 characters. Plain words only: no markdown, lists, emojis or asterisks.
+- For the makeup intake, do NOT list six questions. Ask one or two at a time.
+- You have NO web access. Recommend from your own knowledge and say prices may vary.
+- END EVERY reply with exactly one tag. Pick the best match:
+  [EMO:GREET] hi/hello or someone walked up; [EMO:MORNING] good morning; [EMO:NIGHT] good night;
+  [EMO:THANKS] they thank you; [EMO:LOVE] compliments or affection; [EMO:EMOTIONAL] you are touched or teary;
+  [EMO:HAPPY] cheerful chat; [EMO:SAD] sad news or lonely; [EMO:ANGRY] only playful grumpiness;
+  [EMO:SURPRISED] surprises; [EMO:SLEEPY] dark or late; [EMO:NEUTRAL] plain answers.
+`;
+
+let skill = '', history = [], active = false, gen = 0, state = 'idle';
+let port = null, writer = null, pendingState = null, recog = null;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+fetch('SKILL.md').then(r => r.text()).then(t => { skill = t.replace(/^---[\s\S]*?---\s*/, ''); }).catch(() => {});
+
+function setState(s) { state = s; document.body.dataset.state = s; }
+function show(t) { $('#cap').textContent = t; }
+function setEmo(e) {
+  const [h, f] = EMO[e] || EMO.NEUTRAL;
+  orb.style.setProperty('--hue', h);
+  orb.dataset.face = f;
+  $('#emo').textContent = e.charAt(0) + e.slice(1).toLowerCase();
+}
+
+/* ---------- Arduino over USB (Web Serial) ---------- */
+function send(line) {
+  if (writer) writer.write(new TextEncoder().encode(line + '\n')).catch(() => {});
+}
+async function connectRobot() {
+  if (!navigator.serial) { alert('Web Serial needs Chrome or Edge on a computer.'); return; }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 57600 });
+    writer = port.writable.getWriter();
+    $('#robot').textContent = 'Robot connected';
+    $('#robot').classList.add('on');
+    readLoop();
+    await sleep(2500);               // the Uno restarts when the port opens
+    send('MODE:IDLE');
+  } catch (e) { alert('Could not connect: ' + e.message); }
+}
+async function readLoop() {
+  const reader = port.readable.getReader(), dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value);
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) { handleLine(buf.slice(0, i).trim()); buf = buf.slice(i + 1); }
+  }
+}
+function handleLine(l) {
+  if (l === 'BTN') toggle();
+  else if (l === 'NEAR') {
+    if (!active && state === 'idle')
+      ask('(Someone just walked up to your desk. Greet them in one short, cheerful sentence.)', true);
+  } else if (l.startsWith('S ') && pendingState) { pendingState(l.slice(2)); pendingState = null; }
+}
+function getState() {
+  if (!writer) return Promise.resolve('no body connected');
+  return new Promise(res => {
+    pendingState = res;
+    send('?');
+    setTimeout(() => { if (pendingState) { pendingState = null; res('unknown'); } }, 1500);
+  });
+}
+
+/* ---------- Listening ---------- */
+function listen() {
+  if (!SR) { show('Please open this page in Chrome or Edge.'); active = false; return; }
+  recog = new SR();
+  recog.lang = 'en-US';
+  recog.interimResults = true;
+  let final = '', gotFinal = false;
+  const g = gen;
+  setState('listening');
+  send('MODE:LISTEN');
+  recog.onresult = e => {
+    let t = '';
+    for (const r of e.results) { t += r[0].transcript; if (r.isFinal) gotFinal = true; }
+    final = t; show(t);
+    if (gotFinal) recog.stop();
+  };
+  recog.onend = () => {
+    if (g !== gen || !active) return;
+    if (gotFinal && final.trim()) ask(final.trim());
+    else setTimeout(() => { if (g === gen && active) listen(); }, 300);
+  };
+  recog.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      active = false; gen++; setState('idle');
+      show('Please allow the microphone, then tap the orb again.');
+    }
+  };
+  try { recog.start(); } catch (e) {}
+}
+
+/* ---------- Asking Gemini ---------- */
+function trimmed() {
+  const h = history.slice(-20);
+  while (h.length && h[0].role !== 'user') h.shift();
+  return h;
+}
+async function ask(text, fromNear) {
+  const g = gen;
+  setState('thinking');
+  send('MODE:THINK');
+  const body = await getState();
+  history.push({ role: 'user', parts: [{ text: text + '\n(Robot body status: ' + body + ')' }] });
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system: skill + RULES, contents: trimmed() })
+    });
+    if (!r.ok) throw new Error((await r.text()).slice(0, 160));
+    const { text: reply } = await r.json();
+    history.push({ role: 'model', parts: [{ text: reply }] });
+    if (g === gen || fromNear) await speak(reply, !fromNear);
+  } catch (e) {
+    history.pop();
+    show('Oops: ' + e.message);
+    send('MODE:IDLE');
+    active = false; setState('idle');
+  }
+}
+
+/* ---------- Speaking ---------- */
+function chunks(text, limit = 56) {
+  const out = []; let cur = '';
+  for (let s of text.trim().split(/(?<=[.!?])\s+/)) {
+    while (s.length > limit) {
+      let cut = s.lastIndexOf(' ', limit); if (cut <= 0) cut = limit;
+      if (cur) { out.push(cur); cur = ''; }
+      out.push(s.slice(0, cut).trim()); s = s.slice(cut).trim();
+    }
+    if (!s) continue;
+    if (cur && cur.length + 1 + s.length <= limit) cur += ' ' + s;
+    else { if (cur) out.push(cur); cur = s; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+const say = t => new Promise(res => {
+  const u = new SpeechSynthesisUtterance(t);
+  u.onend = u.onerror = res;
+  speechSynthesis.speak(u);
+});
+async function speak(reply, wave) {
+  const g = gen;
+  const m = reply.match(/\[EMO:(\w+)\]/);
+  let emo = m ? m[1].toUpperCase() : 'NEUTRAL';
+  if (!EMO[emo]) emo = 'NEUTRAL';
+  const text = reply.replace(/\[EMO:\w+\]/g, '').trim();
+  setEmo(emo); show(text); setState('speaking');
+  send('EMO:' + emo);
+  await sleep(500);                  // let the Arduino finish its chirp
+  if (wave && (emo === 'GREET' || emo === 'MORNING')) send('ACT:WAVE');
+  send('MODE:SPEAK');
+  for (const c of chunks(text)) {
+    if (g !== gen) break;
+    send('TXT:' + c.replace(/[^\x20-\x7e]/g, ''));
+    await say(c);
+  }
+  send('MODE:IDLE');
+  setState('idle');
+  if (active && g === gen) listen();
+}
+
+/* ---------- Start / stop ---------- */
+function toggle() {
+  if (active) {
+    active = false; gen++;
+    speechSynthesis.cancel();
+    try { recog && recog.abort(); } catch (e) {}
+    send('MODE:IDLE'); setState('idle');
+    show('Tap the orb to start talking.');
+  } else {
+    active = true; gen++;
+    listen();
+  }
+}
+orb.addEventListener('click', toggle);
+$('#robot').addEventListener('click', connectRobot);
+</script>
+</body>
+</html>
