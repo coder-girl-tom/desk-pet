@@ -124,7 +124,7 @@ const RULES = `
 - Your reply is READ ALOUD and shown on a tiny 16-character screen. MAX 2 short sentences, under 140 characters. Plain words only: no markdown, lists, emojis or asterisks.
 - In Rescue Mode give ONE instruction at a time and wait for the person.
 - You have NO web access. Say facts may be out of date when it matters.
-- END EVERY reply with exactly one tag. Pick the best match:
+- After EACH sentence put one tag showing how you feel saying it, so your face changes as you talk (1 or 2 tags per reply). Pick the best match:
   [EMO:GREET] hello or someone walked up; [EMO:MORNING] good morning; [EMO:NIGHT] good night;
   [EMO:THANKS] they thank you; [EMO:LOVE] compliments or affection; [EMO:EMOTIONAL] touched, or comforting someone scared;
   [EMO:HAPPY] cheerful chat, or someone is safe; [EMO:SAD] sad news, sympathy or lonely; [EMO:ANGRY] playful grumpiness, or a serious danger warning;
@@ -213,7 +213,7 @@ function listen() {
   recog.onresult = e => {
     let t = '';
     for (const r of e.results) { t += r[0].transcript; if (r.isFinal) gotFinal = true; }
-    final = t; show(t, 'you');
+    final = t; show(t, 'you'); reactToUser(t);
     if (gotFinal) recog.stop();
   };
   recog.onend = () => {
@@ -281,25 +281,56 @@ const say = t => new Promise(res => {
   u.onend = u.onerror = res;
   speechSynthesis.speak(u);
 });
+// Gemini puts a tag AFTER each sentence: "Great news! [EMO:HAPPY] I'm proud. [EMO:LOVE]"
+function parseReply(reply) {
+  const segs = [], re = /\[EMO:(\w+)\]/g;
+  let last = 0, pend = null, m;
+  const ok = x => { x = x.toUpperCase(); return EMO[x] ? x : 'NEUTRAL'; };
+  while ((m = re.exec(reply))) {
+    const t = reply.slice(last, m.index).trim(); last = re.lastIndex;
+    if (t) segs.push({ t, e: ok(m[1]) });
+    else if (segs.length) segs[segs.length - 1].e = ok(m[1]);
+    else pend = ok(m[1]);
+  }
+  const rest = reply.slice(last).trim();
+  if (rest) segs.push({ t: rest, e: pend || 'NEUTRAL' });
+  return segs;
+}
 async function speak(reply, wave) {
   const g = gen;
-  const m = reply.match(/\[EMO:(\w+)\]/);
-  let emo = m ? m[1].toUpperCase() : 'NEUTRAL';
-  if (!EMO[emo]) emo = 'NEUTRAL';
-  const text = reply.replace(/\[EMO:\w+\]/g, '').trim();
-  setEmo(emo); show(text, 'bot'); setState('speaking');
-  send('EMO:' + emo);
-  await sleep(500);                  // let the Arduino finish its chirp
-  if (wave && (emo === 'GREET' || emo === 'MORNING')) send('ACT:WAVE');
-  send('MODE:SPEAK');
-  for (const c of chunks(text)) {
+  setState('speaking');
+  let first = true;
+  for (const sg of parseReply(reply)) {
     if (g !== gen) break;
-    send('TXT:' + c.replace(/[^\x20-\x7e]/g, ''));
-    await say(c);
+    setEmo(sg.e); show(sg.t, 'bot'); send('EMO:' + sg.e);
+    await sleep(first ? 500 : 250);   // let the Arduino finish its chirp
+    if (first && wave && (sg.e === 'GREET' || sg.e === 'MORNING')) send('ACT:WAVE');
+    first = false;
+    send('MODE:SPEAK');
+    for (const c of chunks(sg.t)) {
+      if (g !== gen) break;
+      send('TXT:' + c.replace(/[^\x20-\x7e]/g, ''));
+      await say(c);
+    }
   }
   send('MODE:IDLE');
   setState('idle');
   if (active && g === gen) listen();
+}
+
+/* ---------- Face reacts to what the PERSON says (instant, while they talk) ---------- */
+const REACT = [
+  [/emergency|bleeding|on fire|trapped|accident|not breathing|can'?t breathe|cannot breathe|unconscious|earthquake|flood|gas leak|heart attack|choking/i, 'SURPRISED'],
+  [/good morning/i, 'MORNING'], [/good ?night/i, 'NIGHT'], [/thank/i, 'THANKS'],
+  [/love you|you('re| are) (so )?(cute|sweet|awesome|amazing|the best)/i, 'LOVE'],
+  [/\b(sad|lonely|cry|crying|miss|sorry|bad day|depressed|upset)\b/i, 'SAD'],
+  [/\b(angry|mad|annoyed|frustrated|hate)\b/i, 'SURPRISED'],
+  [/\b(tired|sleepy|sleep|exhausted)\b/i, 'SLEEPY'],
+  [/\b(happy|great|awesome|yay|won|passed|haha|funny|joke|fun)\b/i, 'HAPPY'],
+  [/\b(hi|hello|hey)\b/i, 'GREET']
+];
+function reactToUser(t) {
+  for (const [re, e] of REACT) if (re.test(t)) { if (document.body.dataset.emo !== e) setEmo(e); return; }
 }
 
 /* ---------- Start / stop ---------- */
