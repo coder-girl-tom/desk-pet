@@ -70,6 +70,8 @@ video{width:100%;height:100%;object-fit:cover}
 .cam.snap::after{content:"";position:absolute;inset:0;background:var(--cream);animation:snap .4s forwards}
 @keyframes snap{from{opacity:.85}to{opacity:0}}
 #camBtn{position:absolute;bottom:14px}
+#sentbox{position:absolute;left:12px;bottom:12px;display:none;z-index:2;font-size:10px;font-weight:900;color:var(--cream);text-shadow:0 1px 3px #000}
+#sent{display:block;width:110px;border:3px solid var(--cream);border-radius:10px;margin-bottom:2px}
 #camBtn[hidden]{display:none}
 .hud{position:absolute;inset:10px;pointer-events:none;display:none;color:var(--cream);font-size:13px;font-weight:900}
 .cam.on .hud{display:block}
@@ -106,6 +108,7 @@ footer{text-align:center;font-size:13px}
     <div class="cam"><video id="cam" autoplay muted playsinline></video>
       <div id="nosig"><b>( - _ - ) zZ</b><span>camera is asleep</span></div>
       <div class="hud"><i></i><i></i><i></i><i></i><div class="scan"></div><span class="rec">REC</span><span id="ts"></span></div>
+      <div id="sentbox"><img id="sent" alt=""><span id="sentlbl"></span></div>
       <button class="chip" id="camBtn">Wake camera</button></div>
     <div id="camInfo"><span class="pill">Camera off</span></div>
   </section>
@@ -126,7 +129,7 @@ const RULES = `
 - Your reply is READ ALOUD and shown on a tiny 16-character screen. MAX 2 short sentences, under 140 characters. Plain words only: no markdown, lists, emojis or asterisks.
 - In Rescue Mode give ONE instruction at a time and wait for the person.
 - You have NO web access. Say facts may be out of date when it matters.
-- If a camera image is attached, it is what you see right now: describe only what is really visible and count carefully. If the message says the camera is off, you cannot see.
+- If a camera image is attached, it is what you see right now: look at it and answer from what is visible, counting carefully. Never say you cannot see when an image is attached: say what you can see, and ask them to move closer or into better light if needed. If the message says the camera is off, you cannot see.
 - After EACH sentence put one tag showing how you feel saying it, so your face changes as you talk (1 or 2 tags per reply). Pick the best match:
   [EMO:GREET] hello or someone walked up; [EMO:MORNING] good morning; [EMO:NIGHT] good night;
   [EMO:THANKS] they thank you; [EMO:LOVE] compliments or affection; [EMO:EMOTIONAL] touched, or comforting someone scared;
@@ -138,7 +141,7 @@ let skill = '', history = [], active = false, gen = 0, state = 'idle';
 let port = null, writer = null, pendingState = null, recog = null;
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-fetch('SKILL.md').then(r => r.text()).then(t => { skill = t.replace(/^---[\s\S]*?---\s*/, ''); }).catch(() => {});
+fetch('SKILL.md?v=' + Date.now(), { cache: 'no-store' }).then(r => r.text()).then(t => { skill = t.replace(/^---[\s\S]*?---\s*/, ''); }).catch(() => {});
 
 function setState(s) { state = s; document.body.dataset.state = s; }
 let tw;
@@ -241,11 +244,14 @@ function trimmed() {
 }
 function grabFrame() {
   if (!cam.videoWidth) return null;
-  const c = document.createElement('canvas'), w = 640;
+  const c = document.createElement('canvas'), w = 800;
   c.width = w; c.height = Math.round(w * cam.videoHeight / cam.videoWidth);
   c.getContext('2d').drawImage(cam, 0, 0, c.width, c.height);
   const box = $('.cam'); box.classList.add('snap'); setTimeout(() => box.classList.remove('snap'), 400);
-  return c.toDataURL('image/jpeg', 0.7).split(',')[1];
+  const url = c.toDataURL('image/jpeg', 0.8);
+  $('#sent').src = url; $('#sentbox').style.display = 'block';
+  $('#sentlbl').textContent = 'SENT TO GEMINI \u00B7 ' + Math.round(url.length * 0.75 / 1024) + ' KB';
+  return url.split(',')[1];
 }
 function withFrame(contents, frame) {
   if (!frame) return contents;
@@ -259,7 +265,7 @@ async function ask(text, fromNear) {
   send('MODE:THINK');
   const body = await getState();
   const frame = grabFrame();
-  history.push({ role: 'user', parts: [{ text: text + '\n(Robot body status: ' + body + ')\n(Camera: ' + (frame ? 'image attached, this is what you see right now' : 'off, you cannot see') + ')' }] });
+  history.push({ role: 'user', parts: [{ text: text + '\n(Robot body status: ' + body + ')\n(Camera: ' + (frame ? 'image attached: look at it and answer from what is visible' : 'off, you cannot see') + ')' }] });
   try {
     const r = await fetch('/api/chat', {
       method: 'POST',
